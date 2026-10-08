@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#ededed"><meta name="description" content="사진과 문구로 만드는 나만의 iPhone 잠금화면. 문자 도착 효과를 PNG와 GIF로 저장하세요.">
+  <title>TEXTSCENE — 잠금화면 문자 편집기</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<main class="editor-shell">
+  <section class="control-panel" aria-label="잠금화면 편집">
+    <section class="panel-card"><div class="section-heading"><span>01</span><h2>배경 이미지</h2></div><div class="controls-stack">
+      <label class="upload-field"><span class="upload-plus">＋</span><span><strong>이미지 선택</strong><small id="fileName">사진을 불러와 나만의 배경을 만들어 보세요</small></span><input id="backgroundInput" type="file" accept="image/*" aria-label="배경 이미지 선택"></label>
+      <div class="two"><button id="recropButton" disabled>다시 크롭</button><button id="defaultBackground">기본 배경</button></div>
+      <label class="range-field"><span>배경 어둡게 <output id="dimOutput">12%</output></span><input id="dimRange" type="range" min="0" max="80" value="12"></label>
+    </div></section>
+    <section class="panel-card"><div class="section-heading"><span>02</span><h2>잠금화면</h2></div><div class="controls-stack">
+      <div class="two"><label class="text-field">시간<input id="timeInput" value="9:41" maxlength="5" inputmode="numeric"></label><label class="text-field">날짜<input id="dateInput" value="10월 8일 목요일" maxlength="45"></label></div>
+      <div class="two"><div><span class="field-label">화면 언어</span><div class="segmented" role="group" aria-label="화면 언어"><button data-lang="ko" class="active" aria-pressed="true">한글</button><button data-lang="en" aria-pressed="false">English</button></div></div><label class="switch-row"><span>상태바 표시</span><input id="statusToggle" type="checkbox" checked><i aria-hidden="true"></i></label></div>
+    </div></section>
+    <section class="panel-card"><div class="section-heading"><span>03</span><h2>문자 메시지 <small id="messageCount">2 / 4</small></h2></div><div class="controls-stack">
+      <p class="section-note">입력 순서대로 도착하고, 새 문자가 위에 쌓여요.</p>
+      <div id="messageEditors"></div><button id="addMessage" class="add-button">＋ 문자 추가</button>
+      <p class="fine-print" id="overflowNote">긴 내용은 알림 안에서 최대 4줄까지 표시됩니다.</p>
+    </div></section>
+    <section class="panel-card"><div class="section-heading"><span>04</span><h2>알림 스타일</h2></div><div class="controls-stack">
+      <label class="range-field"><span>박스 불투명도 <output id="opacityOutput">72%</output></span><input id="opacityRange" type="range" min="0" max="100" value="72"></label>
+      <label class="range-field"><span>박스 배경 블러 <output id="blurOutput">16px</output></span><input id="blurRange" type="range" min="0" max="40" value="16"></label>
+      <label class="range-field"><span>문자 도착 간격 <output id="intervalOutput">1.2초</output></span><input id="intervalRange" type="range" min="0.7" max="2.5" step="0.1" value="1.2"></label>
+    </div></section>
+    <section class="save-actions"><div class="two"><button id="savePng" class="primary">화면 PNG 저장 <span>화면만 · 정지 이미지</span></button><button id="saveGif" class="dark">화면 GIF 저장 <span>화면만 · 문자 도착 효과</span></button><button id="saveFullPng" class="primary">전체 PNG 저장 <span>휴대폰 테두리 · 투명 배경</span></button><button id="saveFullGif" class="dark">전체 GIF 저장 <span>휴대폰 테두리 · 투명 배경</span></button></div>
+      <div class="export-options"><span>PNG 화면 1080 × 2340<br>전체 1180 × 2440</span><label>GIF 화면 크기 <select id="gifSize"><option value="540">540 × 1170</option><option value="720">720 × 1560</option><option value="1080">1080 × 2340</option></select></label></div>
+      <div id="exportStatus" role="status" aria-live="polite" hidden><span id="exportText"></span><progress id="exportProgress" max="100" value="0"></progress><button id="cancelExport">저장 취소</button></div>
+      <p class="privacy">사진과 문자는 이 브라우저 안에서만 처리됩니다.</p>
+    </section>
+  </section>
+  <section class="preview-stage" aria-labelledby="previewTitle"><div class="preview-head"><h1 id="previewTitle">미리보기 <span class="live-dot"></span></h1><span>LIVE PREVIEW</span></div>
+    <div class="phone-shell"><button id="previewButton" aria-label="문자 도착 효과 재생"><canvas id="previewCanvas" width="1080" height="2340" aria-label="잠금화면 문자 미리보기"></canvas></button></div>
+    <button id="playButton" class="play-button">▷ 도착 효과 재생</button>
+  </section>
+</main>
+<dialog id="cropDialog" aria-labelledby="cropTitle"><div class="crop-card"><header class="crop-header"><div><h2 id="cropTitle">배경 크롭</h2><p>사진을 드래그해 위치를 맞춰 주세요 · 9:19.5</p></div><button id="cropClose" aria-label="크롭 취소">×</button></header><div class="crop-workspace"><canvas id="cropCanvas" width="360" height="780" tabindex="0" aria-label="사진 크롭. 방향키로 이동, 플러스와 마이너스로 확대 축소"></canvas></div><label class="range-field"><span>확대 <output id="zoomOutput">100%</output></span><input id="zoomRange" type="range" min="1" max="4" step="0.01" value="1"></label><div class="two"><button id="cropReset">초기화</button><button id="cropApply" class="primary">이 영역 사용</button></div></div></dialog>
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="./gifenc.js"></script><script src="./gif-utils.js"></script><script src="./app.js"></script>
+</body></html>
