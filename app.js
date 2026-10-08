@@ -1,0 +1,96 @@
+'use strict';
+const $ = s => document.querySelector(s);
+const canvas = $('#previewCanvas'), ctx = canvas.getContext('2d');
+const W = 390, H = 845, CW = 360, CH = 780;
+const state = {time:'9:41',date:'10월 8일 목요일',language:'ko',showStatus:true,dim:12,opacity:72,blur:16,interval:1.2,image:null,fileName:'',crop:{zoom:1,x:0,y:0},messages:[{sender:'너',body:'지금 뭐 해?'},{sender:'너',body:'그냥, 네 생각이 나서.'}]};
+let animation = 0, renderFrame = 0, toastTimer, exporting = false, exportCancelled = false, exportWorker = null;
+let background = null, blurred = null;
+const cropCanvas = $('#cropCanvas'), cropCtx = cropCanvas.getContext('2d'), cropDialog = $('#cropDialog');
+let workingImage, workingFileName, workingCrop, drag = null, pinch = null;
+const pointers = new Map();
+function makeCanvas(width,height){const c=document.createElement('canvas');c.width=width;c.height=height;return c;}
+function round(c,x,y,w,h,r){c.beginPath();c.roundRect(x,y,w,h,r);}
+function box(c,x,y,w,h,r,color){c.fillStyle=color;round(c,x,y,w,h,r);c.fill();}
+function text(c,value,x,y,size=15,color='#fff',align='left',weight=400){c.font=`${weight} ${size}px AppleNeo, sans-serif`;c.fillStyle=color;c.textAlign=align;c.textBaseline='alphabetic';c.fillText(value,x,y);}
+function fitText(c,value,width){let out=String(value);if(c.measureText(out).width<=width)return out;const chars=Array.from(out);while(chars.length&&c.measureText(chars.join('')+'…').width>width)chars.pop();return chars.join('')+'…';}
+function lines(c,value,width,max=4){const all=[];for(const para of String(value).split('\n')){let line='';for(const ch of Array.from(para)){if(line&&c.measureText(line+ch).width>width){all.push(line.trimEnd());line=ch.trimStart();}else line+=ch;}all.push(line);}const out=all.slice(0,max);if(all.length>max)out[max-1]=fitText(c,out[max-1]+'…',width-1);return out;}
+function placement(image,crop,width,height){const scale=Math.max(width/image.naturalWidth,height/image.naturalHeight)*crop.zoom;const w=image.naturalWidth*scale,h=image.naturalHeight*scale;return {x:(width-w)/2+crop.x*width/CW,y:(height-h)/2+crop.y*height/CH,w,h};}
+function drawImage(c,image,crop,width,height){const p=placement(image,crop,width,height);c.drawImage(image,p.x,p.y,p.w,p.h);}
+function buildBackground(){background=makeCanvas(1080,2340);const b=background.getContext('2d');if(state.image){drawImage(b,state.image,state.crop,1080,2340);}else{
+  const g=b.createLinearGradient(0,0,620,2340);g.addColorStop(0,'#1a2335');g.addColorStop(.48,'#3d5169');g.addColorStop(.72,'#a29893');g.addColorStop(.86,'#c9a395');g.addColorStop(1,'#656e7c');b.fillStyle=g;b.fillRect(0,0,1080,2340);
+  const glow=b.createRadialGradient(740,1610,30,740,1610,920);glow.addColorStop(0,'#ecc1a950');glow.addColorStop(1,'#a1a7ba00');b.fillStyle=glow;b.fillRect(0,0,1080,2340);
+  b.fillStyle='#1b293c33';b.beginPath();b.moveTo(0,1920);b.bezierCurveTo(330,1700,470,2080,1080,1760);b.lineTo(1080,2340);b.lineTo(0,2340);b.fill();
+}b.fillStyle=`rgba(0,0,0,${state.dim/100})`;b.fillRect(0,0,1080,2340);buildBlur();}
+function buildBlur(){if(!background)return;blurred=makeCanvas(1080,2340);const b=blurred.getContext('2d');b.drawImage(background,0,0);b.filter=`blur(${state.blur*1080/W}px)`;b.drawImage(background,0,0);}
+function status(c){const white='#ffffffed';for(let i=0;i<5;i++){c.beginPath();c.arc(16+i*6,19,2.3,0,Math.PI*2);c.fillStyle=white;c.fill();}const wifiX=58;c.save();c.strokeStyle=white;c.lineWidth=1.4;for(const r of [4,7,10]){c.beginPath();c.arc(wifiX,24,r,-Math.PI*.76,-Math.PI*.24);c.stroke();}c.restore();text(c,'100%',343,23,10,white,'right');round(c,348,13,25,11,2);c.strokeStyle=white;c.lineWidth=1;c.stroke();box(c,350,15,21,7,1,white);box(c,375,16,2,5,1,white);}
+function lock(c){c.save();c.strokeStyle='white';c.lineWidth=2.5;c.beginPath();c.moveTo(189.7,60);c.lineTo(189.7,52);c.arc(195,52,5.3,Math.PI,0);c.lineTo(200.3,60);c.stroke();box(c,187,57,16,13,3,'white');c.restore();}
+function messageIcon(c,x,y){const g=c.createLinearGradient(x,y,x,y+20);g.addColorStop(0,'#68ee70');g.addColorStop(1,'#1ec83f');box(c,x,y,20,20,4,g);c.fillStyle='white';c.beginPath();c.ellipse(x+10,y+9.5,7,5.8,0,0,Math.PI*2);c.fill();c.beginPath();c.moveTo(x+5,y+12);c.lineTo(x+4,y+17);c.lineTo(x+10,y+14);c.fill();}
+function cardLayouts(c){c.font='400 15px AppleNeo, sans-serif';return state.messages.map(m=>{const body=lines(c,m.body,338);return {m,body,h:70+body.length*18};});}
+function card(c,layout,y,alpha=1,scale=1){const x=10,w=370,h=layout.h;c.save();c.globalAlpha=alpha;c.translate(W/2,y+h/2);c.scale(scale,scale);c.translate(-W/2,-y-h/2);round(c,x,y,w,h,13);c.save();c.clip();if(state.blur>0)c.drawImage(blurred,0,0,W,H);c.fillStyle=`rgba(244,244,249,${state.opacity/100})`;c.fillRect(x,y,w,h);c.fillStyle=`rgba(255,255,255,${state.opacity/100*.17})`;c.fillRect(x,y,w,33);c.restore();messageIcon(c,x+11,y+7);text(c,state.language==='ko'?'메시지':'MESSAGES',x+37,y+22,11,'#3a3c44');text(c,state.language==='ko'?'지금':'now',x+w-13,y+22,11,'#5d5d65','right');c.font='600 15px AppleNeo, sans-serif';text(c,fitText(c,layout.m.sender||' ',338),x+13,y+55,15,'#18191e','left',600);layout.body.forEach((line,i)=>text(c,line,x+13,y+74+i*18,15,'#24252b'));c.restore();}
+function stackTop(layouts){return Math.min(230,800-layouts.reduce((height,item)=>height+item.h,0)-Math.max(0,layouts.length-1)*8);}
+function spring(p){return p>=1?1:1-Math.exp(-7*p)*Math.cos(8*p);}
+function drawScene(target,time=Infinity){if(!background)buildBackground();const c=target.getContext('2d');c.save();c.setTransform(target.width/W,0,0,target.height/H,0,0);c.clearRect(0,0,W,H);c.drawImage(background,0,0,W,H);if(state.showStatus)status(c);lock(c);text(c,state.time||'9:41',195,157,82,'white','center',100);c.font='400 19px AppleNeo, sans-serif';text(c,fitText(c,state.date,360),195,187,19,'white','center');
+  const layouts=cardLayouts(c),top=stackTop(layouts);const isStatic=!Number.isFinite(time);const index=isStatic?layouts.length-1:Math.min(layouts.length-1,Math.floor((time-.5)/state.interval));
+  if(index>=0){const elapsed=isStatic?1:Math.max(0,time-.5-index*state.interval),p=Math.min(1,elapsed/.6),e=spring(p);const latest=layouts[index];let y=top+(latest.h+8)*e;for(let i=index-1;i>=0;i--){card(c,layouts[i],y);y+=layouts[i].h+8;}card(c,latest,top-34*(1-e),Math.min(1,p*4),.96+.04*e);}
+  c.fillStyle='#ffffffae';[183,195].forEach((x,i)=>{c.beginPath();c.arc(x,817,i===1?3:2.8,0,Math.PI*2);c.fill();});box(c,206,813,10,7,1,'#ffffffad');box(c,209,811,4,2,1,'#ffffffad');c.restore();}
+function stopAnimation(){cancelAnimationFrame(animation);animation=0;$('#playButton').textContent='▷ 도착 효과 재생';}
+function scheduleRender(invalidate){stopAnimation();if(invalidate==='background')buildBackground();else if(invalidate==='blur')buildBlur();cancelAnimationFrame(renderFrame);renderFrame=requestAnimationFrame(()=>drawScene(canvas));}
+async function play(){if(exporting)return;await document.fonts.ready;stopAnimation();const start=performance.now(),duration=.5+(state.messages.length-1)*state.interval+.6;$('#playButton').textContent='↻ 다시 재생';function tick(now){const t=(now-start)/1000;drawScene(canvas,t);if(t<duration)animation=requestAnimationFrame(tick);else {animation=0;drawScene(canvas);}}animation=requestAnimationFrame(tick);}
+function toast(message){$('#toast').textContent=message;$('#toast').classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.remove('show'),3300);}
+function rangeStyle(input){input.style.setProperty('--range-progress',`${(Number(input.value)-Number(input.min))/(Number(input.max)-Number(input.min))*100}%`);}
+function renderEditors(){const root=$('#messageEditors');root.replaceChildren();state.messages.forEach((m,i)=>{const el=document.createElement('div');el.className='message-editor';el.innerHTML=`<div class="message-head"><span>MESSAGE 0${i+1}</span><button type="button" aria-label="${i+1}번 문자 삭제">삭제</button></div><label class="text-field">발신인<input maxlength="60" aria-label="${i+1}번 발신인"></label><label class="text-field">문자 내용<textarea maxlength="500" rows="2" aria-label="${i+1}번 문자 내용"></textarea></label>`;el.querySelector('input').value=m.sender;el.querySelector('textarea').value=m.body;el.querySelector('input').oninput=e=>{m.sender=e.target.value;scheduleRender();};el.querySelector('textarea').oninput=e=>{m.body=e.target.value;scheduleRender();};el.querySelector('button').disabled=state.messages.length===1;el.querySelector('button').onclick=()=>{state.messages.splice(i,1);renderEditors();scheduleRender();};root.append(el);});$('#messageCount').textContent=`${state.messages.length} / 4`;$('#addMessage').disabled=state.messages.length>=4;}
+$('#addMessage').onclick=()=>{if(state.messages.length>=4)return;state.messages.push({sender:'',body:''});renderEditors();scheduleRender();$('#messageEditors').lastElementChild.querySelector('input').focus();};
+[['timeInput','time'],['dateInput','date']].forEach(([id,key])=>{$('#'+id).oninput=e=>{state[key]=e.target.value;scheduleRender();};});
+$('#timeInput').onblur=e=>{if(!/^([01]?\d|2[0-3]):[0-5]\d$/.test(e.target.value)){e.target.value=state.time='9:41';scheduleRender();toast('시간은 9:41처럼 입력해 주세요.');}};
+document.querySelectorAll('[data-lang]').forEach(b=>b.onclick=()=>{state.language=b.dataset.lang;document.querySelectorAll('[data-lang]').forEach(item=>{item.classList.toggle('active',item===b);item.setAttribute('aria-pressed',String(item===b));});if(['10월 8일 목요일','Thursday, October 8'].includes(state.date)){$('#dateInput').value=state.date=state.language==='ko'?'10월 8일 목요일':'Thursday, October 8';}scheduleRender();});
+$('#statusToggle').onchange=e=>{state.showStatus=e.target.checked;scheduleRender();};
+[['dim','%','background'],['opacity','%'],['blur','px','blur'],['interval','초']].forEach(([key,unit,invalid])=>{const input=$('#'+key+'Range');input.oninput=()=>{state[key]=Number(input.value);$('#'+key+'Output').textContent=input.value+unit;rangeStyle(input);scheduleRender(invalid);};rangeStyle(input);});
+$('#previewButton').onclick=play;$('#playButton').onclick=play;
+function clampCrop(){const p=placement(workingImage,{...workingCrop,x:0,y:0},CW,CH);workingCrop.x=Math.max(-(p.w-CW)/2,Math.min((p.w-CW)/2,workingCrop.x));workingCrop.y=Math.max(-(p.h-CH)/2,Math.min((p.h-CH)/2,workingCrop.y));}
+function drawCrop(){clampCrop();cropCtx.clearRect(0,0,CW,CH);drawImage(cropCtx,workingImage,workingCrop,CW,CH);cropCtx.strokeStyle='#ffffff65';cropCtx.lineWidth=1;for(const t of [1/3,2/3]){cropCtx.beginPath();cropCtx.moveTo(CW*t,0);cropCtx.lineTo(CW*t,CH);cropCtx.moveTo(0,CH*t);cropCtx.lineTo(CW,CH*t);cropCtx.stroke();}$('#zoomRange').value=workingCrop.zoom;$('#zoomOutput').textContent=Math.round(workingCrop.zoom*100)+'%';rangeStyle($('#zoomRange'));}
+function fitCrop(){const shell=cropCanvas.parentElement,s=Math.min(shell.clientWidth/CW,shell.clientHeight/CH);cropCanvas.style.width=Math.floor(CW*s)+'px';cropCanvas.style.height=Math.floor(CH*s)+'px';}
+function openCrop(image,name,crop={zoom:1,x:0,y:0}){workingImage=image;workingFileName=name;workingCrop={...crop};pointers.clear();drag=pinch=null;cropDialog.showModal();requestAnimationFrame(()=>{fitCrop();drawCrop();});}
+$('#backgroundInput').onchange=e=>{const file=e.target.files?.[0];e.target.value='';if(!file)return;if(!file.type.startsWith('image/'))return toast('이미지 파일을 선택해 주세요.');const url=URL.createObjectURL(file),image=new Image();image.onload=()=>{URL.revokeObjectURL(url);openCrop(image,file.name);};image.onerror=()=>{URL.revokeObjectURL(url);toast('이 이미지를 열 수 없습니다. PNG 또는 JPG로 다시 선택해 주세요.');};image.src=url;};
+$('#recropButton').onclick=()=>state.image&&openCrop(state.image,state.fileName,state.crop);
+$('#defaultBackground').onclick=()=>{state.image=null;state.crop={zoom:1,x:0,y:0};state.fileName='';$('#fileName').textContent='사진을 불러와 나만의 배경을 만들어 보세요';$('#recropButton').disabled=true;scheduleRender('background');};
+$('#cropClose').onclick=()=>cropDialog.close();$('#cropReset').onclick=()=>{workingCrop={zoom:1,x:0,y:0};drawCrop();};
+$('#cropApply').onclick=()=>{state.image=workingImage;state.fileName=workingFileName;state.crop={...workingCrop};$('#fileName').textContent=state.fileName;$('#recropButton').disabled=false;cropDialog.close();scheduleRender('background');};
+$('#zoomRange').oninput=e=>{workingCrop.zoom=Number(e.target.value);drawCrop();};
+cropCanvas.onpointerdown=e=>{if(e.pointerType==='mouse'&&e.button!==0)return;e.preventDefault();cropCanvas.setPointerCapture(e.pointerId);pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});cropCanvas.classList.add('dragging');if(pointers.size===1)drag={x:e.clientX,y:e.clientY,cx:workingCrop.x,cy:workingCrop.y};else{const [a,b]=[...pointers.values()];pinch={distance:Math.hypot(a.x-b.x,a.y-b.y),zoom:workingCrop.zoom};drag=null;}};
+cropCanvas.onpointermove=e=>{if(!pointers.has(e.pointerId))return;pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pointers.size>=2&&pinch){const [a,b]=[...pointers.values()];workingCrop.zoom=Math.max(1,Math.min(4,pinch.zoom*Math.hypot(a.x-b.x,a.y-b.y)/Math.max(1,pinch.distance)));}else if(drag){const rect=cropCanvas.getBoundingClientRect();workingCrop.x=drag.cx+(e.clientX-drag.x)*CW/rect.width;workingCrop.y=drag.cy+(e.clientY-drag.y)*CH/rect.height;}drawCrop();};
+function endPointer(e){pointers.delete(e.pointerId);pinch=null;if(pointers.size){const a=[...pointers.values()][0];drag={x:a.x,y:a.y,cx:workingCrop.x,cy:workingCrop.y};}else{drag=null;cropCanvas.classList.remove('dragging');}}
+cropCanvas.onpointerup=endPointer;cropCanvas.onpointercancel=endPointer;cropCanvas.onlostpointercapture=endPointer;
+cropCanvas.addEventListener('wheel',e=>{e.preventDefault();workingCrop.zoom=Math.max(1,Math.min(4,workingCrop.zoom+(e.deltaY<0?.08:-.08)));drawCrop();},{passive:false});
+cropCanvas.onkeydown=e=>{const moves={ArrowLeft:[-8,0],ArrowRight:[8,0],ArrowUp:[0,-8],ArrowDown:[0,8]};if(moves[e.key]){e.preventDefault();workingCrop.x+=moves[e.key][0];workingCrop.y+=moves[e.key][1];drawCrop();}else if(['+','=','-'].includes(e.key)){e.preventDefault();workingCrop.zoom=Math.max(1,Math.min(4,workingCrop.zoom+(e.key==='-'?-.1:.1)));drawCrop();}};
+new ResizeObserver(()=>{if(cropDialog.open)fitCrop();}).observe($('.crop-workspace'));
+function exportSurface(screenWidth, full = false) {
+  const screen=makeCanvas(screenWidth,screenWidth*13/6),scale=screenWidth/1080;
+  const out=full?makeCanvas(Math.round(1180*scale),Math.round(2440*scale)):screen;
+  return {out, render(time=Infinity) {
+    drawScene(screen,time);
+    if(!full)return;
+    const c=out.getContext('2d');c.clearRect(0,0,out.width,out.height);
+    c.save();c.scale(scale,scale);
+    box(c,18,320,18,220,8,'#111');box(c,18,620,18,220,8,'#111');
+    box(c,30,20,1120,2400,165,'#000');
+    round(c,50,50,1080,2340,132);c.clip();c.drawImage(screen,50,50,1080,2340);c.restore();
+  }};
+}
+function download(blob,ext,full=false){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`textscene-${full?'full':'screen'}-${Date.now()}.${ext}`;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
+async function exportPng(full=false){if(exporting)return;setExportUI(true);$('#exportStatus').hidden=true;try{await document.fonts.ready;const surface=exportSurface(1080,full);surface.render();const blob=await new Promise(resolve=>surface.out.toBlob(resolve,'image/png'));if(!blob)throw Error('PNG');download(blob,'png',full);toast(full?'투명 배경의 전체 PNG를 저장했습니다.':'모든 문자가 표시된 화면 PNG를 저장했습니다.');}catch{toast('이미지를 저장하지 못했습니다. 다시 시도해 주세요.');}finally{setExportUI(false);}}
+$('#savePng').onclick=()=>exportPng();$('#saveFullPng').onclick=()=>exportPng(true);
+function setExportUI(busy){exporting=busy;document.querySelectorAll('.control-panel input,.control-panel textarea,.control-panel select,.control-panel button,#playButton,#previewButton').forEach(el=>el.disabled=busy);if(!busy){$('#recropButton').disabled=!state.image;$('#addMessage').disabled=state.messages.length>=4;document.querySelectorAll('.message-head button').forEach(b=>b.disabled=state.messages.length===1);}$('#cancelExport').disabled=false;$('#exportStatus').hidden=!busy;}
+function frameSchedule(){const frames=[{time:0,delay:500}];state.messages.forEach((m,i)=>{const start=.5+i*state.interval;for(let j=1;j<=12;j++)frames.push({time:start+j*.05,delay:j===12?(i===state.messages.length-1?1800:Math.round((state.interval-.55)*1000)):50});});return frames;}
+function workerCall(worker,data,transfer=[]){return new Promise((resolve,reject)=>{const timeout=setTimeout(()=>{cleanup();reject(Error('GIF timeout'));},90000);const cleanup=()=>{clearTimeout(timeout);worker.onmessage=worker.onerror=null;};worker.onmessage=e=>{cleanup();if(e.data.error)reject(Error(e.data.error));else resolve(e.data);};worker.onerror=e=>{cleanup();reject(Error(e.message));};worker.postMessage(data,transfer);});}
+$('#cancelExport').onclick=()=>{exportCancelled=true;if(exportWorker){exportWorker.dispatchEvent(new ErrorEvent('error',{message:'cancelled'}));exportWorker.terminate();exportWorker=null;}};
+async function exportGif(full=false){if(exporting)return;exportCancelled=false;stopAnimation();setExportUI(true);$('#exportText').textContent='GIF 준비 중…';$('#exportProgress').value=0;let worker;try{
+  await document.fonts.ready;const surface=exportSurface(Number($('#gifSize').value),full),out=surface.out,width=out.width,height=out.height,c=out.getContext('2d',{willReadFrequently:true});surface.render();const reference=c.getImageData(0,0,width,height).data;
+  let fallbackEncoder=null,palette=null;try{worker=new Worker('./gif-worker.js');exportWorker=worker;await workerCall(worker,{type:'init',width,height,pixels:reference.buffer,transparent:full});}catch(e){if(worker)worker.terminate();worker=null;exportWorker=null;if(exportCancelled)throw e;palette=textsceneGif.palette(reference,full);fallbackEncoder=gifenc.GIFEncoder();}
+  const frames=frameSchedule();for(let i=0;i<frames.length;i++){if(exportCancelled)throw Error('cancelled');const f=frames[i];surface.render(f.time);const pixels=c.getImageData(0,0,width,height).data;if(worker)await workerCall(worker,{type:'frame',pixels:pixels.buffer,delay:f.delay},[pixels.buffer]);else{fallbackEncoder.writeFrame(textsceneGif.frame(pixels,palette),width,height,textsceneGif.options(palette,f.delay));await new Promise(r=>setTimeout(r,0));}const progress=Math.round((i+1)/frames.length*100);$('#exportProgress').value=progress;$('#exportText').textContent=`문자 도착 효과 저장 중… ${progress}%`;}
+  if(exportCancelled)throw Error('cancelled');let bytes;if(worker){const result=await workerCall(worker,{type:'finish'});bytes=result.bytes;}else{fallbackEncoder.finish();bytes=fallbackEncoder.bytes();}download(new Blob([bytes],{type:'image/gif'}),'gif',full);toast(full?'투명 배경의 전체 GIF를 저장했습니다.':'문자 도착 효과가 담긴 화면 GIF를 저장했습니다.');
+}catch(e){toast(exportCancelled?'GIF 저장을 취소했습니다.':'GIF를 저장하지 못했습니다. 크기를 낮춰 다시 시도해 주세요.');console.error(e);}finally{worker?.terminate();exportWorker=null;setExportUI(false);drawScene(canvas);}};
+$('#saveGif').onclick=()=>exportGif();$('#saveFullGif').onclick=()=>exportGif(true);
+renderEditors();buildBackground();drawScene(canvas);Promise.all([document.fonts.load('100 82px AppleNeo'),document.fonts.load('400 15px AppleNeo')]).then(()=>drawScene(canvas));
+
+
+
